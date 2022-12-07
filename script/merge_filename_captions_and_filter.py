@@ -52,14 +52,6 @@ def main(args):
   image_paths = glob.glob(os.path.join(args.train_data_dir, "*.jpg")) + glob.glob(os.path.join(args.train_data_dir, "*.png"))
   print(f"found {len(image_paths)} images.")
 
-  if os.path.exists(args.in_json):
-    print(f"loading existing metadata: {args.in_json}")
-    with open(args.in_json, "rt", encoding='utf-8') as f:
-      metadata = json.load(f)
-  else:
-    print("no metadata / メタデータファイルがありません")
-    return
-
   print("cleaning captions and tags.")
   for image_path in tqdm(image_paths):
     base_path = os.path.splitext(image_path)[0]
