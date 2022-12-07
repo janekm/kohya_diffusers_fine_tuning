@@ -48,6 +48,7 @@ tag_replacements = {
     'supergirl': 'supergirl',
     'alina': 'alina',
     'blackpink': 'blackpink',
+    'blurry': 'shallow depth of field',
 }
 
 def main(args):
