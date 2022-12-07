@@ -62,12 +62,14 @@ def main(args):
     filename_tags = filename_tags.split(',')
     tags = set()
     for tag in filename_tags:
-      if tag.strip() in tag_replacements:
-        tags.add(tag_replacements[tag.strip()])
+      tag = tag.strip()
+      if tag in tag_replacements.keys():
+        tags.add(tag_replacements[tag])
     with open(tags_path, "rt", encoding='utf-8') as f:
       caption_file_tags = f.readlines()[0].strip()
       caption_file_tags = caption_file_tags.split(',')
       for i, tag in enumerate(caption_file_tags):
+        tag = tag.strip()
         if tag in tag_replacements:
           tags.add(tag_replacements[tag])
         else:
