@@ -36,16 +36,32 @@ from accelerate import Accelerator
 from accelerate.utils import set_seed
 from transformers import CLIPTextModel, CLIPTokenizer
 import diffusers
-from diffusers import DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel
+from diffusers import DDPMScheduler, StableDiffusionPipeline, UNet2DConditionModel, DDIMScheduler
 import numpy as np
 from einops import rearrange
 from torch import einsum
 
 import fine_tuning_utils
 
+try:
+  import wandb
+except ImportError:
+  pass
+
+prompts = [
+  ("girl wearing bikini on the beach","",704,832,2766802111),
+  ("lando alina","",768,768,2766802114),
+  ("portrait of lando alina, beautiful, gorgeous, masterpiece, high quality, perfect, bokeh blur, cinematic, 105mm f2.4","cg society, ugly, blurry, blurred detail, poorly drawn hands, poorly drawn face, enhanced hands, missing fingers, mutated hands, fused fingers, deformed, malformed limbs, disfigured, watermarked, text, extremely grainy, very chromatic aberration, oversaturated",704,832,2766802109),
+  ("concept art painting of supergirl by wlop","fat, overweight, fugly, frumpy, frequency separation, ugly, blurry, blurred detail, poor hands, poor face, enhanced hands, missing fingers, mutated hands, fused fingers, deformed, malformed limbs, disfigured, watermarked, text, extremely grainy, very chromatic aberration",704,832,2766802115),
+  ("concept art painting of supergirl by artgerm, sakimichan, artstation contest winner","fat, overweight, fugly, frumpy, frequency separation, ugly, blurry, blurred detail, poor hands, poor face, enhanced hands, missing fingers, mutated hands, fused fingers, deformed, malformed limbs, disfigured, watermarked, text, extremely grainy, very chromatic aberration",704,832,2766802115),
+  ("concept art painting of a girl victorian steampunk pirate by Jean-Louis-Ernest Meissonier","fat, overweight, fugly, frumpy, frequency separation, ugly, blurry, blurred detail, poor hands, poor face, enhanced hands, missing fingers, mutated hands, fused fingers, deformed, malformed limbs, disfigured, watermarked, text, extremely grainy, very chromatic aberration",704,832,2766802109),
+  ("portrait of a girl wearing a bikini, beautiful, gorgeous, masterpiece, high quality, perfect, bokeh blur, cinematic, 105mm f2.4","cg society, ugly, blurry, blurred detail, poorly drawn hands, poorly drawn face, enhanced hands, missing fingers, mutated hands, fused fingers, deformed, malformed limbs, disfigured, watermarked, text, extremely grainy, very chromatic aberration, oversaturated",704,832,2766802109),
+  ("portrait of chloe moretz, beautiful, gorgeous, masterpiece, high quality, perfect, bokeh blur, cinematic, 105mm f2.4","cg society, ugly, blurry, blurred detail, poorly drawn hands, poorly drawn face, enhanced hands, missing fingers, mutated hands, fused fingers, deformed, malformed limbs, disfigured, watermarked, text, extremely grainy, very chromatic aberration, oversaturated",704,832,2766802109),
+]
+
 # Tokenizer: checkpointから読み込むのではなくあらかじめ提供されているものを使う
 TOKENIZER_PATH = "openai/clip-vit-large-patch14"
-V2_STABLE_DIFFUSION_PATH = "stabilityai/stable-diffusion-2"     # ここからtokenizerだけ使う
+V2_STABLE_DIFFUSION_PATH = "stabilityai/stable-diffusion-2-1"     # ここからtokenizerだけ使う
 
 # checkpointファイル名
 LAST_CHECKPOINT_NAME = "last.ckpt"
@@ -59,6 +75,39 @@ EPOCH_DIFFUSERS_DIR_NAME = "epoch-{:06d}"
 def collate_fn(examples):
   return examples[0]
 
+def gen_sample_images(accelerator, text_encoder, unet, vae, tokenizer, pretrained_model_name_or_path):
+  _scheduler = DDIMScheduler.from_pretrained(pretrained_model_name_or_path, subfolder="scheduler")
+  pipeline = StableDiffusionPipeline(
+      unet=unet,
+      text_encoder=text_encoder,
+      vae=vae,
+      scheduler=_scheduler,
+      tokenizer=tokenizer,
+      safety_checker=None,
+      feature_extractor=None,
+      requires_safety_checker=None
+  )
+  pipeline = pipeline.to(accelerator.device)
+  g_cuda = torch.Generator(device=accelerator.device).manual_seed(args.seed)
+  with torch.autocast("cuda"), torch.inference_mode():
+    images = []
+    for (pos_prompt,neg_prompt,x_res,y_res,seed) in prompts:
+      torch.manual_seed(seed)
+      image_array = pipeline(
+        prompt=pos_prompt,
+        negative_prompt=neg_prompt,
+        width=x_res,
+        height=y_res,
+        num_images_per_prompt=1,
+        num_inference_steps=20,
+        generator=g_cuda
+        ).images
+      images = images + [wandb.Image(img, caption=f"{pos_prompt} | {neg_prompt}") for img in image_array]
+    accelerator.log({f"Sample images": images})
+  del pipeline
+  if torch.cuda.is_available():
+    torch.cuda.empty_cache()
+  del _scheduler
 
 class FineTuningDataset(torch.utils.data.Dataset):
   def __init__(self, metadata, train_data_dir, batch_size, tokenizer, max_token_length, shuffle_caption, dataset_repeats, debug) -> None:
@@ -279,8 +328,13 @@ def train(args):
   else:
     log_with = "tensorboard"
     logging_dir = args.logging_dir + "/" + time.strftime('%Y%m%d%H%M%S', time.localtime())
+  if args.wandb_project_name is not None:
+    log_with = "wandb"
+    logging_dir = None
   accelerator = Accelerator(gradient_accumulation_steps=args.gradient_accumulation_steps,
                             mixed_precision=args.mixed_precision, log_with=log_with, logging_dir=logging_dir)
+  if args.wandb_project_name is not None:
+    accelerator.init_trackers(args.wandb_project_name)
 
   # mixed precisionに対応した型を用意しておき適宜castする
   weight_dtype = torch.float32
@@ -300,7 +354,7 @@ def train(args):
   # モデルを読み込む
   if use_stable_diffusion_format:
     print("load StableDiffusion checkpoint")
-    text_encoder, _, unet = fine_tuning_utils.load_models_from_stable_diffusion_checkpoint(
+    text_encoder, vae, unet = fine_tuning_utils.load_models_from_stable_diffusion_checkpoint(
         args.v2, args.pretrained_model_name_or_path)
   else:
     print("load Diffusers pretrained models")
@@ -308,6 +362,7 @@ def train(args):
     # , torch_dtype=weight_dtype) ここでtorch_dtypeを指定すると学習時にエラーになる
     text_encoder = pipe.text_encoder
     unet = pipe.unet
+    vae = pipe.vae
     del pipe
 
   # モデルに xformers とか memory efficient attention を組み込む
@@ -328,6 +383,11 @@ def train(args):
 
     print("apply hypernetwork")
     hypernetwork.apply_to_diffusers(None, text_encoder, unet)
+
+  # gen pre-run samples / 事前にサンプルを生成しておく
+  if args.log_images_every_n_epochs is not None:
+    gen_sample_images(accelerator, accelerator.unwrap_model(text_encoder,keep_fp32_wrapper=True), accelerator.unwrap_model(unet,keep_fp32_wrapper=True),
+                              vae, tokenizer, args.log_image_base_checkpoint)
 
   # 学習を準備する：モデルを適切な状態にする
   training_models = []
@@ -588,6 +648,10 @@ def train(args):
         if args.save_state:
           print("saving state.")
           accelerator.save_state(os.path.join(args.output_dir, EPOCH_STATE_NAME.format(epoch + 1)))
+    if args.log_images_every_n_epochs is not None:
+      if (epoch+1) % args.log_images_every_n_epochs == 0:
+        gen_sample_images(accelerator, accelerator.unwrap_model(text_encoder,keep_fp32_wrapper=True), accelerator.unwrap_model(unet,keep_fp32_wrapper=True),
+                                    vae, tokenizer, args.log_image_base_checkpoint)
 
   is_main_process = accelerator.is_main_process
   if is_main_process:
@@ -963,6 +1027,8 @@ if __name__ == '__main__':
                       help="scheduler to use for learning rate / 学習率のスケジューラ: linear, cosine, cosine_with_restarts, polynomial, constant (default), constant_with_warmup")
   parser.add_argument("--lr_warmup_steps", type=int, default=0,
                       help="Number of steps for the warmup in the lr scheduler (default is 0) / 学習率のスケジューラをウォームアップするステップ数（デフォルト0）")
+  parser.add_argument("--wandb_project_name", type=str, default=None, help="wandb project name / wandbのプロジェクト名")
+  parser.add_argument("--log_images_every_n_epochs", type=int, default=None,help="log images every n epochs / n epoch毎に画像をログ出力する")
 
   args = parser.parse_args()
   train(args)
