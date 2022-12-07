@@ -44,6 +44,8 @@ tag_replacements = {
     'no humans': '',
     'young': '',
     'greyscale': 'greyscale, B&W',
+    'asian': 'asian',
+    'supergirl': 'supergirl',
 }
 
 def main(args):
