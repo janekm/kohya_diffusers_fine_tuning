@@ -46,6 +46,8 @@ tag_replacements = {
     'greyscale': 'greyscale, B&W',
     'asian': 'asian',
     'supergirl': 'supergirl',
+    'alina': 'alina',
+    'blackpink': 'blackpink',
 }
 
 def main(args):
