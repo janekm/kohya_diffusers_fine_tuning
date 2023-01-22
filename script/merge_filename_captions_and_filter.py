@@ -63,8 +63,8 @@ def main(args):
   print("cleaning captions and tags.")
   for caption_path in tqdm(caption_paths):
     print(caption_path)
-    caption_fn = re.match(r"^\d+-\d+-(photo of [^.]*)", caption_path).groups()[0] + ".txt"
-    caption = re.match(r"^\d+-\d+-photo of ([^(]*)", caption_path).groups()[0]
+    caption_fn = re.match(r"^./\d+-\d+-(photo of [^.]*)", caption_path).groups()[0] + ".txt"
+    caption = re.match(r"^./\d+-\d+-photo of ([^(]*)", caption_path).groups()[0]
     filename_tags = caption.split(',')
     tags = list()
     for tag in filename_tags:
