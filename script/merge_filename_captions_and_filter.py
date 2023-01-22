@@ -76,6 +76,7 @@ def main(args):
     with open(caption_path, "rt", encoding='utf-8') as f:
       caption_file_tags = f.readlines()[0].strip()
       caption_file_tags = caption_file_tags.split
+      print(caption_file_tags)
       for i, tag in enumerate(caption_file_tags):
         tag = tag.strip()
         if tag in tag_replacements:
