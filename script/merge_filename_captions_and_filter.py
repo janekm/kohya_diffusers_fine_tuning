@@ -2,6 +2,7 @@ import argparse
 import glob
 import os
 import json
+import re
 
 from tqdm import tqdm
 
@@ -15,8 +16,8 @@ tag_replacements = {
     'sakimichan': 'painting by sakimichan',
     'markprinz': 'photo by markprinz',
     'supergirl': 'supergirl',
-    'lalisa manobal': 'lalisa manobal',
-    'julia': 'julia',
+    'lalisa manobal': 'photo of lalisa manobal',
+    'julia': 'photo of julia',
     'emma watson': 'emma watson',
     'suzu hirose': 'suzu hirose',
     'zhang jingna': 'fashion photo by zhang jingna',
@@ -49,34 +50,39 @@ tag_replacements = {
     'alina': 'alina',
     'blackpink': 'blackpink',
     'blurry': 'shallow depth of field',
+    'realistic': 'photo',
+    'photorealistic': 'photo',
+    'blurry': '',
+    '1girl': '1girl, woman'
 }
 
 def main(args):
-  image_paths = glob.glob(os.path.join(args.train_data_dir, "*.jpg")) + glob.glob(os.path.join(args.train_data_dir, "*.png"))
-  print(f"found {len(image_paths)} images.")
+  caption_paths = glob.glob(os.path.join(args.train_data_dir, "*.txt"))
+  print(f"found {len(caption_paths)} images.")
 
   print("cleaning captions and tags.")
-  for image_path in tqdm(image_paths):
-    base_path = os.path.splitext(image_path)[0]
-    tags_path = base_path + '.txt'
-    (filename_tags,number) = base_path.split('-')
-    filename_tags = filename_tags.split(',')
-    tags = set()
+  for caption_path in tqdm(caption_paths):
+    caption_fn = re.match(r"^\d+-\d+-(photo of [^.]*)", caption_path).groups()[0] + ".txt"
+    caption = re.match(r"^\d+-\d+-photo of ([^(]*)", caption_path).groups()[0]
+    filename_tags = caption.split(',')
+    tags = list()
     for tag in filename_tags:
       tag = tag.strip()
       if tag in tag_replacements.keys():
-        tags.add(tag_replacements[tag])
-    with open(tags_path, "rt", encoding='utf-8') as f:
+        tag = tag_replacements[tag]
+      if tag not in tags:
+        tags.append(tag)
+    with open(caption_path, "rt", encoding='utf-8') as f:
       caption_file_tags = f.readlines()[0].strip()
-      caption_file_tags = caption_file_tags.split(',')
+      caption_file_tags = caption_file_tags.split
       for i, tag in enumerate(caption_file_tags):
         tag = tag.strip()
         if tag in tag_replacements:
-          tags.add(tag_replacements[tag])
-        else:
-          tags.add(tag)
-    tags = list(tags)
+          tag = tag_replacements[tag]
+        if tag not in tags:
+          tags.append(tag)
     print(f"tags: {tags}")
+    tags_path = os.path.join(args.output_data_dir, caption_fn)
     with open(tags_path, "wt", encoding='utf-8') as f:
       f.write(','.join(tags))
 
@@ -84,6 +90,7 @@ def main(args):
 if __name__ == '__main__':
   parser = argparse.ArgumentParser()
   parser.add_argument("train_data_dir", type=str, help="directory for train images / 学習画像データのディレクトリ")
+  parser.add_argument("output_data_dir", type=str, help="directory for output images / テスト画像データのディレクトリ")
   # parser.add_argument("--debug", action="store_true", help="debug mode")
 
   args = parser.parse_args()
